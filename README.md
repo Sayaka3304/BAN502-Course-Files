@@ -1,2 +1,2 @@
 # BAN502-Course-Files
-Classification Tree Assignment from BAN502 Predictive Analytics
+Assignment files of BAN502 Predictive Analytics
