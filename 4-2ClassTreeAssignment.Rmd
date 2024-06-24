@@ -1,0 +1,219 @@
+---
+title: "4-2. ClassTreeAssignment"
+author: "Sayaka Tanaka"
+date: "2024-06-03"
+output: word_document
+---
+
+```{r, include = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(mice) #package for imputation
+library(VIM) #visualizing missingness
+library(rpart) #for classification trees
+library(rpart.plot) #for plotting trees
+library(RColorBrewer) #better visualization of classification trees
+library(rattle) #better visualization of classification trees
+library(caret)
+```
+
+```{r}
+heart = read_csv("heart_disease-1.csv")
+```
+
+```{r}
+heart = heart %>% mutate(Sex = as_factor(Sex)) %>% 
+  mutate(Sex = fct_recode(Sex, "F" = "0", "M" = "1" )) %>%
+  mutate(ChestPainType = as_factor(ChestPainType)) %>%
+  mutate(RestingECG = as_factor(RestingECG)) %>% 
+  mutate(ExerciseAngina = as_factor(ExerciseAngina)) %>% 
+  mutate(ExerciseAngina = fct_recode(ExerciseAngina, "N" = "0", "Y" = "1")) %>%
+  mutate(ST_Slope = as_factor((ST_Slope))) %>%
+  mutate(HeartDisease = as_factor(HeartDisease)) %>% 
+  mutate(HeartDisease = fct_recode(HeartDisease, "N" = "0", "Y" = "1")) 
+
+  #select(HeartDisease, Sex, ChestPainType, RestingECG, ExerciseAngina, ST_Slope)
+#heart = heart %>% select(c("sex","ChestPainType", "RestingECG", "ExerciseAngina", "ST_Slope", "HeartDisease))
+
+str(heart)
+
+```
+```{r}
+set.seed(12345) 
+heart_split = initial_split(heart, prop = 0.7, strata = HeartDisease) #70% in training
+train = training(heart_split) 
+test = testing(heart_split)
+
+nrow(train)
+```
+
+Q2 
+```{r}
+heart_recipe = recipe(HeartDisease ~., train) %>%
+  step_dummy(all_nominal(),-all_outcomes())
+
+tree_model = decision_tree() %>% 
+  set_engine("rpart", model = TRUE) %>% #don't forget the model = TRUE flag
+  set_mode("classification")
+
+heart_wflow = 
+  workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(heart_recipe)
+
+heart_fit = fit(heart_wflow, train)
+```
+
+
+```{r}
+tree = heart_fit %>% 
+  pull_workflow_fit() %>% 
+  pluck("fit")
+
+fancyRpartPlot(tree) 
+```
+
+
+```{r}
+fancyRpartPlot(tree, tweak=1.2) #tweak makes the tree a little easier to read
+```
+## Q2. First split was ST_Slope
+
+## Q3.Examine the complexity parameter (cp) values tried by R.
+## Which cp value is optimal (recall that the optimal cp corresponds to the minimized “xerror” value)? Report your answer to two decimal places.  
+CP0.01     
+```{r}
+heart_fit$fit$fit$fit$cptable
+```
+
+Q4. 0.81
+## Use a tuning grid (as we did in the Titanic problem) to allow R to try 25 different values for the complexity parameter (cp). R will select reasonable values. Use 5-fold k-fold cross-validation (don’t forget to set up your folds). Use a seed of 123 when setting up your folds.
+Hint:Plot the relationship between the complexity parameter (cp) and model performance (given by accuracy and by ROC AUC). I have provided code in the lectures that use the “collect_metrics” functions to help you do this.
+## From this plot, what is the accuracy of the model (to two decimal places) if a cp value of 0.1 is selected? You will need to “eyeball” this answer. I have included a bit of a tolerance in the answer on Canvas. As long as you are “close” to the correct accuracy, you will see your answer marked as correct.
+
+Create our folds  
+```{r}
+set.seed(123)
+folds = vfold_cv(train, v = 5)
+```
+
+
+```{r}
+heart_recipe = recipe(HeartDisease ~., train) %>%
+  step_dummy(all_nominal(),-all_outcomes())
+
+tree_model = decision_tree(cost_complexity = tune()) %>%  ## Argument
+  set_engine("rpart", model = TRUE) %>% #don't forget the model = TRUE flag
+  set_mode("classification")
+
+tree_grid = grid_regular(cost_complexity(),
+                          levels = 25) #try 25 sensible values for cp
+
+heart_wflow = 
+  workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(heart_recipe)
+
+tree_res = 
+  heart_wflow %>% 
+  tune_grid(
+    resamples = folds,
+    grid = tree_grid
+    )
+
+tree_res
+```
+
+
+Borrowed code from: https://www.tidymodels.org/start/tuning/
+```{r}
+tree_res %>%
+  collect_metrics() %>%
+  ggplot(aes(cost_complexity, mean)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) 
+```
+## Question 5: Which cp value (to four decimal places) yields the “optimal” accuracy value?  0.0075 
+```{r}
+best_tree = tree_res %>%
+  select_best(metric="accuracy")
+
+best_tree
+```
+
+##Question 6: Plot the tree that corresponds to the cp value from Question 5. Don’t forget to finalize your workflow and generate your final fit before trying to plot.  
+## How would you classify a patient that is “Male” with an “ST_Slope” that is “Flat”?  
+Y
+```{r}
+final_wf = 
+  heart_wflow %>% 
+  finalize_workflow(best_tree)
+```
+
+```{r}
+final_fit = fit(final_wf, train)
+
+tree = final_fit %>% 
+  pull_workflow_fit() %>% 
+  pluck("fit")
+
+fancyRpartPlot(tree, tweak = 1.2) 
+
+```
+
+## Question 7: What is the accuracy (on the training set) of the “tree” that you generated in Question 6? Take your time and think about how to determine this value. Report your answer to four decimal places.
+0.8754
+
+Predictions on training set  
+```{r}
+treepred = predict(final_fit, train, type = "class")
+head(treepred)
+```
+
+Caret confusion matrix and accuracy, etc. calcs  
+```{r}
+confusionMatrix(treepred$.pred_class,train$HeartDisease,positive="Y") #predictions first then actual
+```
+## Question 8 What is the sensitivity of your model from Question 6 (on the training set)? Report your answer to four decimal places.
+Sensitivity : 0.9239 
+```{r}
+#Incorrect
+#round(324/(324+31),4) 0.9127
+#round(324/(324+49),4) 0.8686
+328/((328+27))
+
+conf_matrix <- confusionMatrix(treepred$.pred_class, train$HeartDisease, positive = "Y")
+
+# Print the confusion matrix
+print(conf_matrix)
+
+# Extract sensitivity and accuracy
+sensitivity <- conf_matrix$byClass['Sensitivity']
+accuracy <- conf_matrix$overall['Accuracy']
+
+# Print the sensitivity and accuracy
+print(paste("Sensitivity: ", round(sensitivity, 4)))
+print(paste("Accuracy: ", round(accuracy, 4)))
+```
+
+
+
+## Question 9 What is the naive accuracy of your model from Question 6 (on the training set)? Report your answer to four decimal places.
+0.5530
+
+
+
+## Prediction on testing set
+```{r}
+treepred_test = predict(heart_fit, test, type = "class")
+head(treepred_test)
+```
+
+Caret confusion matrix and accuracy, etc. calcs  
+```{r}
+confusionMatrix(treepred_test$.pred_class,test$HeartDisease,positive="Y") #predictions first then actual
+```
+
+## Question 10 What is the accuracy of your model from Question 6 on the testing set (to four decimal places)?
+0.8478 

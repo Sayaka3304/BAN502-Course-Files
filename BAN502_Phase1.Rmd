@@ -1,0 +1,300 @@
+---
+title: "BAN502_Project_Phase1"
+author: "Sayaka Tanaka"
+date: "2024-06-01"
+output: word_document
+---
+
+```{r, include=FALSE}
+library(tidyverse) #tidyverse set of packages and functions
+library(tidymodels)
+library(glmnet) #for Lasso, ridge, and elastic net models 
+library(GGally) #create ggcorr and ggpairs plots
+library(ggcorrplot) #create an alternative to ggcorr plots
+library(gridExtra) #create grids of plots
+library(MASS) #access to forward and backward selection algorithms
+library(leaps) #best subset selection
+library(lmtest) #for the dw test
+library(splines) #for nonlinear fitting
+library(car) #for calculating the variance inflation factor
+library(gridExtra) #used for a little fancy arranging of plots
+library(e1071) #often needed for various statistical tasks
+library(ROCR) #for threshold selction
+library(skimr)
+library(mice)
+library(UpSetR)
+library(VIM) #visualizing missingness
+library(naniar)
+```
+
+```{r}
+train = read_csv("train.csv")
+
+str(train)
+summary(train)
+nrow(train)
+```
+
+Rename
+```{r}
+train = train %>%
+  rename(
+    a0 = attribute_0,
+    a1 = attribute_1,
+    a2 = attribute_2,
+    a3 = attribute_3,
+    m0 = measurement_0,
+    m1 = measurement_1,
+    m2 = measurement_2,
+    m3 = measurement_3,
+    m4 = measurement_4,
+    m5 = measurement_5,
+    m6 = measurement_6,
+    m7 = measurement_7,
+    m8 = measurement_8,
+    m9 = measurement_9,
+    m10 = measurement_10,
+    m11 = measurement_11,
+    m12 = measurement_12,
+    m13 = measurement_13,
+    m14 = measurement_14,
+    m15 = measurement_15,
+    m16 = measurement_16,
+    m17 = measurement_17
+  )
+```
+
+Convert all character variables to factors  
+```{r}
+train = train %>% mutate_if(is.character,as_factor)
+```
+
+Convert attribute_02 and 03 to factor
+```{r}
+train = train %>% mutate(a2 = as_factor(a2))
+train = train %>% mutate(a3 = as_factor(a3))
+```
+
+Make a new numeric variable "failure_num" Yes=1, No = 0
+```{r}
+train$failure_num = ifelse(train$failure == "Yes", 1, 0)
+```
+
+Missing data?
+```{r}
+skim(train)
+```
+
+```{r}
+gg_miss_var(train)
+```
+
+```{r}
+gg_miss_fct(x = train, fct = failure)
+```
+
+```{r}
+vis_miss(train)
+```
+
+#### Drop missing data  
+##### Since the missing data is fairly evenly distributed between the 'yes' and 'no' failure categories and not concentrated in either, I decided to remove rows with missing data.  
+```{r}
+train = train %>% drop_na()
+skim(train)
+str(train)
+```
+#### How many of them failed?
+```{r}
+table(train$failure)
+```
+
+```{r}
+# bar chart for "failure" variable
+table(train$failure)
+ggplot(train, aes(x = failure, fill = failure)) + geom_bar(stat = "count") + labs(title = "Distribution of Failure", x = "Failure")+theme_bw()
+
+```
+
+```{r}
+failure_ratio = prop.table(table(train$failure))
+
+print(failure_ratio)
+
+failure_ratio_df = as.data.frame(failure_ratio)
+colnames(failure_ratio_df) = c("failure", "ratio")
+
+ggplot(failure_ratio_df, aes(x = failure, y = ratio, fill = failure)) + 
+  geom_bar(stat = "identity") + 
+  labs(title = "Ratio of Failure", x = "Failure", y = "Ratio") + 
+  scale_y_continuous(labels = scales::percent)+theme_bw()
+```
+
+#### Visualization of factor Variables vs failure  
+```{r}
+p1 = ggplot(train, aes(x = product_code, fill = failure)) + geom_bar(position = "fill") +theme_bw()+xlab("product_code")
+p2 = ggplot(train, aes(x = a0, fill = failure)) + geom_bar(position = "fill") +theme_bw()+xlab("attribute_0")
+p3 = ggplot(train, aes(x = a1, fill = failure)) + geom_bar(position = "fill") +theme_bw()+xlab("attribute_1")
+p4 = ggplot(train, aes(x = a2, fill = failure)) + geom_bar(position = "fill") +theme_bw()+ xlab("attribute_2")
+p5 = ggplot(train, aes(x = a3, fill = failure)) + geom_bar(position = "fill") +theme_bw()+ xlab("attribute_3")
+grid.arrange(p1,p2,p3,p4,p5)
+```
+
+```{r}
+p6 = ggplot(train, aes(x = failure, y = loading,fill=failure)) + geom_boxplot() +theme_bw()+ylab("loading")
+p7 = ggplot(train, aes(x = failure, y = m0,fill=failure)) + geom_boxplot() +theme_bw()+ylab("Measurement_0")
+p8 = ggplot(train, aes(x = failure, y = m1,fill=failure)) + geom_boxplot() +theme_bw()+ylab("Measurement_1")
+grid.arrange(p6,p7,p8, ncol = 2)
+```
+
+```{r}
+p9 = ggplot(train, aes(x = failure, y = m2,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_2")
+p10 = ggplot(train, aes(x = failure, y = m3,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_3")
+p11 = ggplot(train, aes(x = failure, y = m4,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_4")
+p12 = ggplot(train, aes(x = failure, y = m5,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_5")
+grid.arrange(p9,p10,p11,p12, ncol = 2)
+```
+
+```{r}
+p13 = ggplot(train, aes(x = failure, y = m6,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_6")
+p14 = ggplot(train, aes(x = failure, y = m7,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_7")
+p15 = ggplot(train, aes(x = failure, y = m8,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_8")
+p16 = ggplot(train, aes(x = failure, y = m9,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_9")
+grid.arrange(p13,p14,p15,p16, ncol = 2)
+```
+
+```{r}
+p17 = ggplot(train, aes(x = failure, y = m10,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_10")
+p18 = ggplot(train, aes(x = failure, y = m11,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_11")
+p19 = ggplot(train, aes(x = failure, y = m12,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_12")
+p20 = ggplot(train, aes(x = failure, y = m13,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_13")
+grid.arrange(p17,p18,p19,p20, ncol = 2)
+```
+ 
+```{r}
+p21 = ggplot(train, aes(x = failure, y = m14,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_14")
+p22 = ggplot(train, aes(x = failure, y = m15,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_15")
+p23 = ggplot(train, aes(x = failure, y = m16,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_16")
+p24 = ggplot(train, aes(x = failure, y = m17,fill=failure)) + geom_boxplot()+theme_bw()+ylab("Measurement_17")
+grid.arrange(p21,p22,p23,p24, ncol = 2)
+```
+
+
+```{r}
+ggpairs(train,columns = c( "failure","loading","product_code", "a0", "a1"))
+```
+
+```{r}
+ggpairs(train,columns = c( "failure","a2","a3","m0","m1"))
+```
+
+
+```{r}
+ggpairs(train,columns = c( "failure","m2","m3","m4","m5"))
+```
+
+```{r}
+ggpairs(train,columns = c( "failure","m6","m7","m8","m9"))
+```
+
+```{r}
+ggpairs(train,columns = c( "failure","m10","m11","m12","m13"))
+```
+
+```{r}
+ggpairs(train,columns = c( "failure","m14","m15","m16","m17"))
+```
+
+
+## Use "failure_num" variable for analysis
+### ‘loading’ variable shows the largest correlation coefficient of 0.1.
+
+```{r}
+ggcorr(train,label = TRUE,label_round = 1)
+
+
+corr = round(cor(train[, c(3, 8:25,27)]), 1)
+ggcorrplot(corr, hc.order = TRUE, type = "lower", lab = TRUE)
+
+```
+
+```{r}
+ggpairs(train,columns = c( "failure_num","loading"))
+```
+
+
+
+```{r}
+ggpairs(train,columns = c( "failure_num","loading","product_code", "a0", "a1"))
+```
+
+```{r}
+ggpairs(train,columns = c( "failure_num","a2","a3","m0","m1"))
+```
+
+```{r}
+ggpairs(train,columns = c( "failure_num","m2","m3","m4","m5"))
+```
+
+
+```{r}
+ggpairs(train,columns = c( "failure_num","m6","m7","m8","m9"))
+```
+
+```{r}
+ggpairs(train,columns = c( "failure_num","m10","m11","m12","m13"))
+```
+
+```{r}
+ggpairs(train,columns = c( "failure_num","m14","m15","m16","m17"))
+```
+#### Visualization of numeric variables vs failure_num  
+```{r}
+p25 = ggplot(train, aes(x = product_code, y = failure_num)) + geom_boxplot() +theme_bw()+xlab("product_code")
+p26 = ggplot(train, aes(x = a0, y = failure_num)) +  geom_boxplot() +theme_bw()+xlab("attribute_0")
+p27 = ggplot(train, aes(x = a1, y = failure_num)) +  geom_boxplot() +theme_bw()+ xlab("attribute_1")
+p28 = ggplot(train, aes(x = a2, y = failure_num)) + geom_boxplot() +theme_bw()+ xlab("attribute_2")
+p29 = ggplot(train, aes(x = a3, y = failure_num)) +  geom_boxplot() +theme_bw()+ xlab("attribute_3")
+grid.arrange(p25,p26,p27,p28,p29)
+```
+
+#### Visualization of numeric variables vs failure_num  
+```{r}
+p30 = ggplot(train, aes(x = failure_num, y = loading)) + geom_point() +theme_bw()+ylab("loading")
+p31 = ggplot(train, aes(x = failure_num, y = m0)) + geom_point() +theme_bw()+ylab("Measurement_0")
+p32 = ggplot(train, aes(x = failure_num, y = m1)) + geom_point() +theme_bw()+ylab("Measurement_1")
+grid.arrange(p30,p31,p32, ncol = 2)
+```
+  
+```{r}
+p33 = ggplot(train, aes(x = failure_num, y = m2)) + geom_point()+theme_bw()+ylab("Measurement_2")
+p34 = ggplot(train, aes(x = failure_num, y = m3)) + geom_point()+theme_bw()+ylab("Measurement_3")
+p35 = ggplot(train, aes(x = failure_num, y = m4)) + geom_point()+theme_bw()+ylab("Measurement_4")
+p36 = ggplot(train, aes(x = failure_num, y = m5)) + geom_point()+theme_bw()+ylab("Measurement_5")
+grid.arrange(p33,p34,p35,p36, ncol = 2)
+```
+  
+```{r}
+p37 = ggplot(train, aes(x = failure_num, y = m6)) + geom_point()+theme_bw()+ylab("Measurement_6")
+p38 = ggplot(train, aes(x = failure_num, y = m7)) + geom_point()+theme_bw()+ylab("Measurement_7")
+p39 = ggplot(train, aes(x = failure_num, y = m8)) + geom_point()+theme_bw()+ylab("Measurement_8")
+p40 = ggplot(train, aes(x = failure_num, y = m9)) + geom_point()+theme_bw()+ylab("Measurement_9")
+grid.arrange(p37,p38,p39,p40, ncol = 2)
+```
+ 
+```{r}
+p41 = ggplot(train, aes(x = failure_num, y = m10)) + geom_point()+theme_bw()+ylab("Measurement_10")
+p42 = ggplot(train, aes(x = failure_num, y = m11)) + geom_point()+theme_bw()+ylab("Measurement_11")
+p43 = ggplot(train, aes(x = failure_num, y = m12)) + geom_point()+theme_bw()+ylab("Measurement_12")
+p44 = ggplot(train, aes(x = failure_num, y = m13)) + geom_point()+theme_bw()+ylab("Measurement_13")
+grid.arrange(p41,p42,p43,p44, ncol = 2)
+```
+
+
+```{r}
+p45 = ggplot(train, aes(x = failure_num, y = m14)) + geom_point()+theme_bw()+ylab("Measurement_14")
+p46 = ggplot(train, aes(x = failure_num, y = m15)) + geom_point()+theme_bw()+ylab("Measurement_15")
+p47 = ggplot(train, aes(x = failure_num, y = m16)) + geom_point()+theme_bw()+ylab("Measurement_16")
+p48 = ggplot(train, aes(x = failure_num, y = m17)) + geom_point()+theme_bw()+ylab("Measurement_17")
+grid.arrange(p45,p46,p47,p48, ncol = 2)
+```
